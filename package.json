@@ -1,0 +1,19 @@
+{
+  "name": "example-resumable-parser",
+  "version": "1.0.0",
+  "description": "Example resumable recursive descent parser",
+  "main": "cli.mts",
+  "scripts": {
+    "run": "node --experimental-strip-types cli.mts",
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/igrep/example-resumable-parser.git"
+  },
+  "author": "YAMAMOTO Yuji",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/igrep/example-resumable-parser/issues"
+  },
+  "homepage": "https://github.com/igrep/example-resumable-parser#readme"
+}
