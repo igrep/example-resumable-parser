@@ -1,6 +1,15 @@
-import type { MatchedToken, SpaceSkippingScanner, TokenAndRE, } from "./scanner.mts";
+import type {
+  MatchedToken,
+  SpaceSkippingScanner,
+  TokenAndRE,
+} from "./scanner.mts";
 import { EOF } from "./scanner.mts";
-import type { LocatedArray, LocatedNumber, Location, Result } from "./types.mts";
+import type {
+  LocatedArray,
+  LocatedNumber,
+  Location,
+  Result
+} from "./types.mts";
 
 export const tokens: TokenAndRE[] = [
   { token: "open bracket", regexp: /\[/y },
@@ -9,14 +18,9 @@ export const tokens: TokenAndRE[] = [
   { token: "comma", regexp: /,/y },
 ];
 
-export type ParseError = ParseErrorWantingMore | ParseErrorSkipping;
-
-export function isParseError(e: unknown): e is ParseError {
-  return e instanceof ParseErrorBase;
-}
-
-class ParseErrorBase extends Error {
+export class ParseError extends Error {
   override name = "ParseError";
+  readonly wantsMore: boolean = false;
 
   constructor(messageOrExpected: string, matchedToken?: MatchedToken | EOF) {
     if (matchedToken === undefined) {
@@ -25,6 +29,7 @@ class ParseErrorBase extends Error {
     }
     if (matchedToken === EOF) {
       super(`Expected ${messageOrExpected}, but got end of input`);
+      this.wantsMore = true;
       return;
     }
     const { line, column, tokenKind, matched } = matchedToken;
@@ -34,46 +39,38 @@ class ParseErrorBase extends Error {
   }
 }
 
-export class ParseErrorWantingMore extends ParseErrorBase {
-  wantsMore = true;
-  resume: (more: string) => Result | ParseError;
+export type Parser<T> = Generator<T | ParseError, T | ParseError, string>;
 
-  constructor(messageOrExpected: string, resume: (more: string) => Result | ParseError) {
-    super(messageOrExpected, EOF);
-    this.resume = resume;
-  }
-}
-
-export class ParseErrorSkipping extends ParseErrorBase {
-  wantsMore = false;
-  resume: () => Result | ParseError;
-
-  constructor(messageOrExpected: string, resume: () => Result | ParseError, matchedToken?: MatchedToken) {
-    super(messageOrExpected, matchedToken);
-    this.resume = resume;
-  }
-}
-
-export function resultP(s: SpaceSkippingScanner): Result | ParseError {
+export function* resultP(s: SpaceSkippingScanner): Parser<Result> {
   while (true) {
     const token = s.peek();
     if (token === EOF) {
-      return new ParseErrorWantingMore("form", (more) => feedMoreToResume(s, resultP, more));
+      return new ParseError("form", EOF);
     }
 
-    const { line, column, file } = token;
+    const {line, column, file} = token;
     switch (token.tokenKind) {
       case "open bracket":
-        return arrayP(s, { line, column, file });
+        const p = arrayP(s, { line, column, file });
+        let { value } = p.next();
+        while (true) {
+          if (value instanceof ParseError) {
+            const moreContents = yield(value);
+            if (value.wantsMore) {
+              ({ value } = p.next(moreContents));
+            }
+            continue;
+          }
+          yield value;
+          ({ value } = p.next());
+        }
       case "number":
         s.next(); // Drop the peeked token
-        return numberP(token);
+        yield numberP(token);
+        break;
       default:
-        s.next(); // Drop the peeked token
-        // NOTE: To reduce the number of recursive calls, I shouldn't return
-        //       a ParseError without a continuation here if this call of the
-        //       `resultP` is the entrypoint. But omitted for simplicity.
-        return new ParseErrorSkipping("form", () => resultP(s), token);
+        yield new ParseError("form", token);
+        break;
     }
   }
 }
@@ -84,25 +81,22 @@ function numberP(token: MatchedToken): LocatedNumber {
   return { location: { line, column, file }, value: parseInt(matched[0]) };
 }
 
-function arrayP(
+function* arrayP(
   s: SpaceSkippingScanner,
   location: Location,
-  results: Result[] = [],
-): LocatedArray | ParseError {
+): Parser<LocatedArray> {
   const close = "close bracket";
 
   s.next(); // drop open paren
 
+  const p = resultP(s);
+  const value: Result[] = [];
   while (true) {
     const next = s.peek();
     if (next === EOF) {
-      return new ParseErrorWantingMore(
-        `form or ${close}`,
-        (more) => {
-          s.feed(more);
-          return arrayP(s, location, results);
-        }
-      );
+      const moreContents = yield(new ParseError(`form or ${close}`, EOF));
+      s.feed(moreContents);
+      continue;
     }
     if (next.tokenKind === close) {
       s.next(); // drop close paren
@@ -111,17 +105,16 @@ function arrayP(
 
     // TODO: Parse comma
 
-    const nextValue = resultP(s);
-    if (isParseError(nextValue)) {
-      return nextValue;
+    let { value: nextValue } = p.next();
+    if (nextValue instanceof ParseError) {
+      const moreContents = yield(nextValue);
+      if (nextValue.wantsMore) {
+        ({ value: nextValue } = p.next(moreContents));
+      }
+      continue;
     }
-    results.push(nextValue);
+    value.push(nextValue);
   }
 
-  return { location, value: results };
-}
-
-function feedMoreToResume<T>(s: SpaceSkippingScanner, p: (s: SpaceSkippingScanner) => T | ParseError, more: string): T | ParseError {
-  s.feed(more);
-  return p(s);
+  return { location, value };
 }
