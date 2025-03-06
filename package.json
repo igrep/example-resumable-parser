@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "Example resumable recursive descent parser",
   "main": "cli.mts",
+  "type": "module",
   "scripts": {
-    "run": "node --experimental-strip-types cli.mts",
+    "run": "node --experimental-strip-types cli.mts"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,9 @@
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/igrep/example-resumable-parser/issues"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
   },
   "homepage": "https://github.com/igrep/example-resumable-parser#readme"
 }
