@@ -41,14 +41,22 @@ export class ParseError extends Error {
 
 export type Parser<T> = Generator<T | ParseError, T | ParseError, string>;
 
+function p<T>(head: string, x: T): T {
+  console.log(head, x);
+  return x;
+}
+
 export function* resultP(s: SpaceSkippingScanner): Parser<Result> {
+  s.feed(yield new ParseError("form", EOF));
   while (true) {
-    const token = s.peek();
+    const token = s.next();
+    console.log("resultP", { token });
     if (token === EOF) {
-      return new ParseError("form", EOF);
+      s.feed(p("feeding", yield new ParseError("form", EOF)));
+      continue;
     }
 
-    const {line, column, file} = token;
+    const { line, column, file } = token;
     switch (token.tokenKind) {
       case "open bracket":
         const p = arrayP(s, { line, column, file });
@@ -65,7 +73,7 @@ export function* resultP(s: SpaceSkippingScanner): Parser<Result> {
           ({ value } = p.next());
         }
       case "number":
-        s.next(); // Drop the peeked token
+        //s.next(); // Drop the peeked token
         yield numberP(token);
         break;
       default:
@@ -87,19 +95,19 @@ function* arrayP(
 ): Parser<LocatedArray> {
   const close = "close bracket";
 
-  s.next(); // drop open paren
+  //s.next(); // drop open paren
 
   const p = resultP(s);
   const value: Result[] = [];
   while (true) {
-    const next = s.peek();
+    const next = s.next();
     if (next === EOF) {
       const moreContents = yield(new ParseError(`form or ${close}`, EOF));
       s.feed(moreContents);
       continue;
     }
     if (next.tokenKind === close) {
-      s.next(); // drop close paren
+      //s.next(); // drop close paren
       break;
     }
 

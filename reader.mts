@@ -1,3 +1,6 @@
+import { ParseError, type Parser, resultP, tokens } from "./grammar.mts";
+import { EOF, SpaceSkippingScanner } from "./scanner.mts";
+import type { FilePath, ReaderInput, Result } from "./types.mts";
 
 /* TODO 
 export function readStr(input: ReaderInput): Result | ParseError {
@@ -28,4 +31,13 @@ export function readBlock(input: ReaderInput): Result[] | ParseError {
 }
 */
 
-export {}
+export function* readResumably(
+  path: FilePath,
+): Parser<Result> {
+  const s = new SpaceSkippingScanner(tokens, path);
+  const p = resultP(s);
+  let value: Result | ParseError = new ParseError("form", EOF);
+  while (true) {
+    ({ value } = p.next(yield value));
+  }
+}

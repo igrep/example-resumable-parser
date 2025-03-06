@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import { resultP, tokens } from "./grammar.mts";
+import { ParseError, resultP, tokens } from "./grammar.mts";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { SpaceSkippingScanner } from "./scanner.mts";
+import { readResumably } from "./reader.mts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -18,8 +19,7 @@ function finalize(): void {
 async function loop(): Promise<void> {
   try {
     const position = { line: 1, column: 1, file: "(REPL)" };
-    const s = new SpaceSkippingScanner(tokens, position.file);
-    const p = resultP(s);
+    const p = readResumably(position.file);
     while (true) {
       const answer = await rl.question(
         `${position.file}:${position.line},${position.column}:> `
@@ -30,8 +30,10 @@ async function loop(): Promise<void> {
       }
       const { value } = p.next(answer);
       console.log(value);
-      position.column = s.peek().column;
-      position.line = s.peek().line;
+      if (!(value instanceof ParseError)) {
+        position.column = value.location.column;
+        position.line = value.location.line;
+      }
     }
   } catch (err) {
     finalize();

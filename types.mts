@@ -18,3 +18,8 @@ export interface LocatedArray {
   value: Result[];
   location: Location;
 }
+
+export interface ReaderInput {
+  readonly path: FilePath;
+  readonly contents: string;
+}

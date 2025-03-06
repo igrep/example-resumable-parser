@@ -31,7 +31,7 @@ export class SpaceSkippingScanner {
   // Last position of linebreak.
   #lastLinebreakAt = 0;
 
-  #lastToken: MatchedToken | EOF;
+  #lastToken: MatchedToken | EOF = EOF;
 
   constructor(res: TokenAndRE[], path: FilePath) {
     for (const { token: t, regexp: r } of res) {
@@ -44,13 +44,19 @@ export class SpaceSkippingScanner {
 
     this.#res = res;
     this.#path = path;
-    this.#lastToken = this.#next();
+    //this.#lastToken = this.#next();
+  }
+
+  get line(): number {
+    return this.#line;
+  }
+
+  get column(): number {
+    return this.#lastToken?.column ?? 1;
   }
 
   next(): MatchedToken | EOF {
-    const lastToken = this.#lastToken;
-    this.#lastToken = this.#next();
-    return lastToken;
+    return this.#lastToken = this.#next();
   }
 
   #next(): MatchedToken | EOF {
@@ -98,6 +104,8 @@ export class SpaceSkippingScanner {
 
 
   #scan(r: RegExp): Omit<MatchedToken, "tokenKind"> | EOF {
+    console.log("scan: #contents", this.#contents);
+    console.log("scan: #position", this.#position);
     if (this.#position >= this.#contents.length) {
       this.#position = 0;
 
@@ -125,5 +133,7 @@ export class SpaceSkippingScanner {
 
   feed(contents: string): void {
     this.#contents = contents;
+    console.log("#contents", this.#contents);
+    console.log("#position", this.#position);
   }
 }
