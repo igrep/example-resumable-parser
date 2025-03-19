@@ -1,26 +1,18 @@
-import type {
-  MatchedToken,
-  SpaceSkippingScanner,
-  TokenAndRE,
-} from "./scanner.mts";
+import type { MatchedToken, SpaceSkippingScanner, TokenAndRE, } from "./scanner.mts";
 import { EOF } from "./scanner.mts";
-import type {
-  LocatedArray,
-  LocatedNumber,
-  Location,
-  Result
-} from "./types.mts";
+import type { LocatedArray, LocatedNumber, Location, Result } from "./types.mts";
 
 export const tokens: TokenAndRE[] = [
   { token: "open bracket", regexp: /\[/y },
   { token: "close bracket", regexp: /\]/y },
-  { token: "number", regexp: /d+/y },
+  { token: "number", regexp: /\d+/y },
   { token: "comma", regexp: /,/y },
 ];
 
-export class ParseError extends Error {
+export type ParseError<R> = ParseErrorWantingMore<R> | ParseErrorSkipping<R>;
+
+class ParseErrorBase extends Error {
   override name = "ParseError";
-  readonly wantsMore: boolean = false;
 
   constructor(messageOrExpected: string, matchedToken?: MatchedToken | EOF) {
     if (matchedToken === undefined) {
@@ -29,7 +21,6 @@ export class ParseError extends Error {
     }
     if (matchedToken === EOF) {
       super(`Expected ${messageOrExpected}, but got end of input`);
-      this.wantsMore = true;
       return;
     }
     const { line, column, tokenKind, matched } = matchedToken;
@@ -39,90 +30,109 @@ export class ParseError extends Error {
   }
 }
 
-export type Parser<T> = Generator<T | ParseError, T | ParseError, string>;
+export class ParseErrorWantingMore<R> extends ParseErrorBase {
+  resume: (more: string) => R;
 
-function p<T>(head: string, x: T): T {
-  console.log(head, x);
-  return x;
-}
-
-export function* resultP(s: SpaceSkippingScanner): Parser<Result> {
-  s.feed(yield new ParseError("form", EOF));
-  while (true) {
-    const token = s.next();
-    console.log("resultP", { token });
-    if (token === EOF) {
-      s.feed(p("feeding", yield new ParseError("form", EOF)));
-      continue;
-    }
-
-    const { line, column, file } = token;
-    switch (token.tokenKind) {
-      case "open bracket":
-        const p = arrayP(s, { line, column, file });
-        let { value } = p.next();
-        while (true) {
-          if (value instanceof ParseError) {
-            const moreContents = yield(value);
-            if (value.wantsMore) {
-              ({ value } = p.next(moreContents));
-            }
-            continue;
-          }
-          yield value;
-          ({ value } = p.next());
-        }
-      case "number":
-        //s.next(); // Drop the peeked token
-        yield numberP(token);
-        break;
-      default:
-        yield new ParseError("form", token);
-        break;
-    }
+  constructor(messageOrExpected: string, resume: (more: string) => R) {
+    super(messageOrExpected, EOF);
+    this.resume = resume;
   }
 }
 
-function numberP(token: MatchedToken): LocatedNumber {
-  const { line, column, file } = token;
-  const { matched } = token;
-  return { location: { line, column, file }, value: parseInt(matched[0]) };
+export class ParseErrorSkipping<R> extends ParseErrorBase {
+  resume: () => R;
+
+  constructor(messageOrExpected: string, resume: () => R, matchedToken?: MatchedToken) {
+    super(messageOrExpected, matchedToken);
+    this.resume = resume;
+  }
 }
 
-function* arrayP(
+export function resultP<R>(s: SpaceSkippingScanner, k: (r: Result | ParseError<R>) => R): R {
+  const token = s.peek();
+  if (token === EOF) {
+    return k(new ParseErrorWantingMore("form", function resultPEof(more) {
+      s.feed(more);
+      s.next(); // go to next token
+      return resultP(s, k);
+    }));
+  }
+
+  const { line, column, file } = token;
+  switch (token.tokenKind) {
+    case "open bracket":
+      return arrayP(s, { line, column, file }, k);
+    case "number":
+      s.next(); // Drop the peeked token
+      return numberP(token, k);
+    default:
+      s.next(); // Drop the peeked token
+      // NOTE: To reduce the number of recursive calls, I shouldn't return
+      //       a ParseError without a continuation here if this call of the
+      //       `resultP` is the entrypoint. But omitted for simplicity.
+      return k(
+        new ParseErrorSkipping(
+          "form",
+          () => resultP(s, k),
+          token,
+        ),
+      );
+  }
+}
+
+function numberP<R>(token: MatchedToken, k: (r: LocatedNumber) => R): R {
+  const { line, column, file } = token;
+  const { matched } = token;
+  return k({ location: { line, column, file }, value: parseInt(matched[0]) });
+}
+
+function arrayP<R>(
   s: SpaceSkippingScanner,
   location: Location,
-): Parser<LocatedArray> {
+  k: (r: LocatedArray | ParseError<R>) => R,
+): R {
   const close = "close bracket";
 
-  //s.next(); // drop open paren
-
-  const p = resultP(s);
-  const value: Result[] = [];
-  while (true) {
-    const next = s.next();
+  s.next(); // drop open paren
+  const results: Result[] = [];
+  return (function arrayPLoop(): R {
+    const next = s.peek();
     if (next === EOF) {
-      const moreContents = yield(new ParseError(`form or ${close}`, EOF));
-      s.feed(moreContents);
-      continue;
+      return k(new ParseErrorWantingMore(
+        `form or ${close}`,
+        (more) => {
+          s.feed(more);
+          s.next(); // go to next token
+          return arrayPLoop();
+        }
+      ));
     }
     if (next.tokenKind === close) {
-      //s.next(); // drop close paren
-      break;
+      s.next(); // drop close paren
+      return k({ location, value: results });
     }
 
     // TODO: Parse comma
 
-    let { value: nextValue } = p.next();
-    if (nextValue instanceof ParseError) {
-      const moreContents = yield(nextValue);
-      if (nextValue.wantsMore) {
-        ({ value: nextValue } = p.next(moreContents));
+    return resultP(s, function arrayPNext(r): R {
+      if (r instanceof ParseErrorSkipping) {
+        return k(
+          new ParseErrorSkipping(
+            "form",
+            () => {
+              s.next(); // go to next token
+              return arrayPLoop();
+            },
+            next,
+          ),
+        );
       }
-      continue;
-    }
-    value.push(nextValue);
-  }
-
-  return { location, value };
+      if (r instanceof ParseErrorBase) {
+        s.next(); // go to next token
+        return k(r);
+      }
+      results.push(r);
+      return arrayPLoop();
+    });
+  })();
 }

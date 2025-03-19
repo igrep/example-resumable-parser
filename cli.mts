@@ -1,51 +1,70 @@
 #!/usr/bin/env node
 
-import { ParseError, resultP, tokens } from "./grammar.mts";
-import * as readline from "node:readline/promises";
+import * as readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 
-import { SpaceSkippingScanner } from "./scanner.mts";
 import { readResumably } from "./reader.mts";
+import { ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
+import { toJsValue } from "./utils.mts";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
-const rl = readline.createInterface({ input, output });
+const rl = readline.createInterface({input, output});
 
 function finalize(): void {
   rl.close();
   input.destroy();
 }
 
-async function loop(): Promise<void> {
+type Position = {
+  line: number;
+  column: number;
+  file: string
+};
+
+function cliLoop(position: Position = {line: 1, column: 1, file: "(REPL)"}) {
   try {
-    const position = { line: 1, column: 1, file: "(REPL)" };
-    const p = readResumably(position.file);
-    while (true) {
-      const answer = await rl.question(
-        `${position.file}:${position.line},${position.column}:> `
+    ask(position, ">", (answer) => {
+      readResumably(
+        { path: position.file, contents: answer },
+        function loop2(r) {
+          if (r instanceof ParseErrorSkipping) {
+            console.log("ParseErrorSkipping", r.message);
+            return r.resume();
+          }
+          if (r instanceof ParseErrorWantingMore) {
+            return ask(position, "|", (more) => {
+              return r.resume(more);
+            });
+          }
+
+          console.log(toJsValue(r));
+          // TODO: Set correct position from the result
+          position.column = 1;
+          position.line += 1;
+
+          cliLoop(position);
+        }
       );
-      if (answer === "") {
-        finalize();
-        break;
-      }
-      const { value } = p.next(answer);
-      console.log(value);
-      if (!(value instanceof ParseError)) {
-        position.column = value.location.column;
-        position.line = value.location.line;
-      }
-    }
+    });
   } catch (err) {
     finalize();
     throw err;
   }
 }
 
-export function assertNonError<T>(v: T | Error): T {
-  if (v instanceof Error) {
-    throw v;
-  }
-  return v;
+function ask(
+  position: Position,
+  promptPrefix: string,
+  k: (answer: string) => void,
+): void {
+  rl.question(
+    `${position.file}:${position.line},${position.column}:${promptPrefix} `,
+    (answer) => {
+      if (answer === "") {
+        finalize();
+        return;
+      }
+      k(answer);
+    });
 }
 
-loop();
+cliLoop();

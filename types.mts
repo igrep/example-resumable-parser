@@ -1,6 +1,11 @@
 
 export type FilePath = string;
 
+export interface ReaderInput {
+  readonly path: FilePath;
+  readonly contents: string;
+}
+
 export interface Location {
   line: number;
   column: number;
@@ -17,9 +22,4 @@ export interface LocatedNumber {
 export interface LocatedArray {
   value: Result[];
   location: Location;
-}
-
-export interface ReaderInput {
-  readonly path: FilePath;
-  readonly contents: string;
 }

@@ -1,4 +1,4 @@
-import type { FilePath, Location } from "./types.mts";
+import type { FilePath, Location, ReaderInput } from "./types.mts";
 
 export type TokenKind = string;
 
@@ -24,16 +24,16 @@ export const UNKNOWN_TOKEN: TokenAndRE = {
 export class SpaceSkippingScanner {
   readonly #res: TokenAndRE[];
   readonly #path: FilePath;
-  #contents = "";
+  #contents: string;
   #position = 0;
 
   #line = 1;
   // Last position of linebreak.
   #lastLinebreakAt = 0;
 
-  #lastToken: MatchedToken | EOF = EOF;
+  #lastToken: MatchedToken | EOF;
 
-  constructor(res: TokenAndRE[], path: FilePath) {
+  constructor(res: TokenAndRE[], input: ReaderInput) {
     for (const { token: t, regexp: r } of res) {
       if (!r.sticky) {
         throw new Error(
@@ -43,20 +43,15 @@ export class SpaceSkippingScanner {
     }
 
     this.#res = res;
-    this.#path = path;
-    //this.#lastToken = this.#next();
-  }
-
-  get line(): number {
-    return this.#line;
-  }
-
-  get column(): number {
-    return this.#lastToken?.column ?? 1;
+    this.#path = input.path;
+    this.#contents = input.contents;
+    this.#lastToken = this.#next();
   }
 
   next(): MatchedToken | EOF {
-    return this.#lastToken = this.#next();
+    const lastToken = this.#lastToken;
+    this.#lastToken = this.#next();
+    return lastToken;
   }
 
   #next(): MatchedToken | EOF {
@@ -104,16 +99,7 @@ export class SpaceSkippingScanner {
 
 
   #scan(r: RegExp): Omit<MatchedToken, "tokenKind"> | EOF {
-    console.log("scan: #contents", this.#contents);
-    console.log("scan: #position", this.#position);
     if (this.#position >= this.#contents.length) {
-      this.#position = 0;
-
-      // When the scanner reaches the end of the input,
-      // the string fed next should start from the beginning of the line.
-      this.#lastLinebreakAt = 0;
-      ++this.#line;
-
       return EOF;
     }
 
@@ -132,8 +118,12 @@ export class SpaceSkippingScanner {
   }
 
   feed(contents: string): void {
+    // When the scanner reaches the end of the input,
+    // the string fed next should start from the beginning of the line.
+    this.#lastLinebreakAt = 0;
+    this.#position = 0;
+    ++this.#line;
+
     this.#contents = contents;
-    console.log("#contents", this.#contents);
-    console.log("#position", this.#position);
   }
 }
