@@ -1,67 +1,85 @@
-import type { MatchedToken, SpaceSkippingScanner, TokenAndRE, } from "./scanner.mts";
-import { EOF } from "./scanner.mts";
-import type { LocatedArray, LocatedNumber, Location, Result } from "./types.mts";
+import {
+    eof,
+    isEof,
+  type Eof,
+  type MatchedToken,
+  type SpaceSkippingScanner,
+  type TokenAndRE,
+} from "./scanner.mts";
+import type {
+  LocatedArray,
+  LocatedNumber,
+  Location,
+  Result
+} from "./types.mts";
 
 export const tokens: TokenAndRE[] = [
   { token: "open bracket", regexp: /\[/y },
   { token: "close bracket", regexp: /\]/y },
   { token: "number", regexp: /\d+/y },
   { token: "comma", regexp: /,/y },
+  { token: "UNKNOWN", regexp: /[^\[\]\d,]+/y },
 ];
 
-export type ParseError<R> = ParseErrorWantingMore<R> | ParseErrorSkipping<R>;
+export type ParseError<R> =
+  | ParseErrorWantingMore<R>
+  | ParseErrorSkipping<R>;
 
 class ParseErrorBase extends Error {
-  override name = "ParseError";
+  override name = "ParseErrorBase";
+  location: Location;
 
-  constructor(messageOrExpected: string, matchedToken?: MatchedToken | EOF) {
-    if (matchedToken === undefined) {
-      super(messageOrExpected);
-      return;
+  constructor(messageOrExpected: string, matchedToken: MatchedToken | Eof) {
+    const { file, line, column } = matchedToken;
+    if (isEof(matchedToken)) {
+      super(`Expected ${messageOrExpected}, but got end of input, at line ${line}, column ${column}`);
+    } else {
+      const { tokenKind, matched } = matchedToken;
+      super(
+        `Expected ${messageOrExpected}, but got ${tokenKind}: "${matched[0]}", at line ${line}, column ${column}`,
+      );
     }
-    if (matchedToken === EOF) {
-      super(`Expected ${messageOrExpected}, but got end of input`);
-      return;
-    }
-    const { line, column, tokenKind, matched } = matchedToken;
-    super(
-      `Expected ${messageOrExpected}, but got ${tokenKind}: "${matched[0]}", at line ${line}, column ${column}`,
-    );
+    this.location = { line, column, file };
   }
 }
 
 export class ParseErrorWantingMore<R> extends ParseErrorBase {
-  resume: (more: string) => R;
+  override name = "ParseErrorWantingMore";
+  resume: (more: string) => R | ParseError<R>;
 
-  constructor(messageOrExpected: string, resume: (more: string) => R) {
-    super(messageOrExpected, EOF);
+  constructor(messageOrExpected: string, eof: Eof, resume: (more: string) => R | ParseError<R>) {
+    super(messageOrExpected, eof);
     this.resume = resume;
   }
 }
 
 export class ParseErrorSkipping<R> extends ParseErrorBase {
-  resume: () => R;
+  override name = "ParseErrorSkipping";
+  resume: () => R | ParseError<R>;
 
-  constructor(messageOrExpected: string, resume: () => R, matchedToken?: MatchedToken) {
+  constructor(messageOrExpected: string, matchedToken: MatchedToken | Eof, resume: () => R | ParseError<R>) {
     super(messageOrExpected, matchedToken);
     this.resume = resume;
   }
 }
 
-export function resultP<R>(s: SpaceSkippingScanner, k: (r: Result | ParseError<R>) => R): R {
+export function resultP<R>(
+  s: SpaceSkippingScanner,
+  k: (r: Result | ParseError<Result>) => R | ParseError<R>,
+): R | ParseError<R> {
   const token = s.peek();
-  if (token === EOF) {
-    return k(new ParseErrorWantingMore("form", function resultPEof(more) {
+  if (isEof(token)) {
+    return new ParseErrorWantingMore("form", token, function resultPEof(more) {
       s.feed(more);
       s.next(); // go to next token
       return resultP(s, k);
-    }));
+    });
   }
 
-  const { line, column, file } = token;
+  const {line, column, file} = token;
   switch (token.tokenKind) {
     case "open bracket":
-      return arrayP(s, { line, column, file }, k);
+      return arrayP(s, {line, column, file}, k);
     case "number":
       s.next(); // Drop the peeked token
       return numberP(token, k);
@@ -70,66 +88,80 @@ export function resultP<R>(s: SpaceSkippingScanner, k: (r: Result | ParseError<R
       // NOTE: To reduce the number of recursive calls, I shouldn't return
       //       a ParseError without a continuation here if this call of the
       //       `resultP` is the entrypoint. But omitted for simplicity.
-      return k(
-        new ParseErrorSkipping(
-          "form",
-          () => resultP(s, k),
-          token,
-        ),
+      return new ParseErrorSkipping(
+        "form",
+        token,
+        () => resultP(s, k),
       );
   }
 }
 
-function numberP<R>(token: MatchedToken, k: (r: LocatedNumber) => R): R {
-  const { line, column, file } = token;
-  const { matched } = token;
-  return k({ location: { line, column, file }, value: parseInt(matched[0]) });
+function numberP<R>(
+  token: MatchedToken,
+  k: (r: LocatedNumber) => R | ParseError<R>
+): R | ParseError<R> {
+  const {line, column, file} = token;
+  const {matched} = token;
+  return k({location: {line, column, file}, value: parseInt(matched[0])});
 }
 
 function arrayP<R>(
   s: SpaceSkippingScanner,
   location: Location,
-  k: (r: LocatedArray | ParseError<R>) => R,
-): R {
+  k: (r: LocatedArray | ParseError<LocatedArray>) => R | ParseError<R>,
+): R | ParseError<R> {
   const close = "close bracket";
 
   s.next(); // drop open paren
   const results: Result[] = [];
-  return (function arrayPLoop(): R {
+  return (function arrayPLoop(): R | ParseError<R> {
     const next = s.peek();
-    if (next === EOF) {
-      return k(new ParseErrorWantingMore(
+    if (isEof(next)) {
+      return new ParseErrorWantingMore(
         `form or ${close}`,
+        next,
         (more) => {
           s.feed(more);
           s.next(); // go to next token
           return arrayPLoop();
         }
-      ));
+      );
+    }
+    if (next.tokenKind === "UNKNOWN") {
+      return new ParseErrorSkipping(
+        "form",
+        next,
+        () => {
+          s.next(); // drop close paren
+          return arrayPLoop();
+        },
+      );
     }
     if (next.tokenKind === close) {
       s.next(); // drop close paren
-      return k({ location, value: results });
+      return k({location, value: results});
     }
 
     // TODO: Parse comma
 
-    return resultP(s, function arrayPNext(r): R {
-      if (r instanceof ParseErrorSkipping) {
-        return k(
-          new ParseErrorSkipping(
-            "form",
-            () => {
-              s.next(); // go to next token
-              return arrayPLoop();
-            },
-            next,
-          ),
+    return resultP(s, function arrayPNext(r): R | ParseError<R> {
+      if (r instanceof ParseErrorWantingMore) {
+        return new ParseErrorWantingMore(
+          "form",
+          eof(r.location),
+          (more) => {
+            s.feed(more);
+            s.next(); // go to next token
+            return arrayPLoop();
+          },
         );
       }
-      if (r instanceof ParseErrorBase) {
-        s.next(); // go to next token
-        return k(r);
+      if (r instanceof ParseErrorSkipping) {
+        return new ParseErrorSkipping(
+          "form",
+          next,
+          () => arrayPLoop(),
+        );
       }
       results.push(r);
       return arrayPLoop();

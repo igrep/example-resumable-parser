@@ -4,8 +4,9 @@ import * as readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
 
 import { readResumably } from "./reader.mts";
-import { ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
+import { type ParseError, ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
 import { toJsValue } from "./utils.mts";
+import { type Result } from "./types.mts";
 
 const rl = readline.createInterface({input, output});
 
@@ -22,28 +23,28 @@ type Position = {
 
 function cliLoop(position: Position = {line: 1, column: 1, file: "(REPL)"}) {
   try {
-    ask(position, ">", (answer) => {
-      readResumably(
-        { path: position.file, contents: answer },
-        function loop2(r) {
-          if (r instanceof ParseErrorSkipping) {
-            console.log("ParseErrorSkipping", r.message);
-            return r.resume();
-          }
-          if (r instanceof ParseErrorWantingMore) {
-            return ask(position, "|", (more) => {
-              return r.resume(more);
-            });
-          }
-
-          console.log(toJsValue(r));
-          // TODO: Set correct position from the result
-          position.column = 1;
-          position.line += 1;
-
-          cliLoop(position);
+    ask(position, ">>>", (answer) => {
+      let r = readResumably({ path: position.file, contents: answer });
+      function handleResult(r: Result | ParseError<Result>) {
+        if (r instanceof ParseErrorSkipping) {
+          console.log("ParseErrorSkipping", r.message);
+          return handleResult(r.resume());
         }
-      );
+        if (r instanceof ParseErrorWantingMore) {
+          position.column = r.location.column;
+          position.line = r.location.line;
+          return ask(position, "...", (more) => {
+            return handleResult(r.resume(more));
+          });
+        }
+
+        console.log(toJsValue(r));
+      }
+      handleResult(r);
+      position.column = r.location.column;
+      position.line = r.location.line;
+
+      cliLoop(position);
     });
   } catch (err) {
     finalize();

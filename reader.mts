@@ -35,10 +35,9 @@ import {
 import { SpaceSkippingScanner } from "./scanner.mts";
 import type { ReaderInput, Result } from "./types.mts";
 
-export function readResumably<R>(
+export function readResumably(
   input: ReaderInput,
-  handle: (r: Result | ParseError<R>) => R,
-): R {
+): Result | ParseError<Result> {
   const s = new SpaceSkippingScanner(tokens, input);
-  return resultP(s, handle);
+  return resultP(s, (r) => r);
 }

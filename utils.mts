@@ -8,3 +8,10 @@ export function toJsValue(r: Result): ResultToJsValueResult {
   }
   return r.value;
 }
+
+export function assertNonError<T>(x: T | Error): T {
+  if (x instanceof Error) {
+    throw x;
+  }
+  return x;
+}
