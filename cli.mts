@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-import * as readline from "node:readline";
+import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { readResumably } from "./reader.mts";
-import { type ParseError, ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
+import { ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
 import { toJsValue } from "./utils.mts";
-import { type Result } from "./types.mts";
 
 const rl = readline.createInterface({input, output});
 
@@ -21,51 +20,47 @@ type Position = {
   file: string
 };
 
-function cliLoop(position: Position = {line: 1, column: 1, file: "(REPL)"}) {
+async function cliLoop(position: Position = {line: 1, column: 1, file: "(REPL)"}): Promise<void> {
   try {
-    ask(position, ">>>", (answer) => {
+    while (true) {
+      const answer = await ask(position, ">>>");
+      if (answer === "") {
+        finalize();
+        break;
+      }
       let r = readResumably({ path: position.file, contents: answer });
-      function handleResult(r: Result | ParseError<Result>) {
+      while (true) {
         if (r instanceof ParseErrorSkipping) {
           console.log("ParseErrorSkipping", r.message);
-          return handleResult(r.resume());
+          r = r.resume();
+          continue;
         }
         if (r instanceof ParseErrorWantingMore) {
           position.column = r.location.column;
           position.line = r.location.line;
-          return ask(position, "...", (more) => {
-            return handleResult(r.resume(more));
-          });
+          const more = await ask(position, "...");
+          r = r.resume(more);
+          continue;
         }
-
-        console.log(toJsValue(r));
+        break;
       }
-      handleResult(r);
+      console.log(toJsValue(r));
       position.column = r.location.column;
       position.line = r.location.line;
-
-      cliLoop(position);
-    });
+    }
   } catch (err) {
     finalize();
     throw err;
   }
 }
 
-function ask(
+async function ask(
   position: Position,
   promptPrefix: string,
-  k: (answer: string) => void,
-): void {
-  rl.question(
-    `${position.file}:${position.line},${position.column}:${promptPrefix} `,
-    (answer) => {
-      if (answer === "") {
-        finalize();
-        return;
-      }
-      k(answer);
-    });
+): Promise<string> {
+  return await rl.question(
+    `${position.file}:${position.line},${position.column}:${promptPrefix} `
+  );
 }
 
 cliLoop();
