@@ -6,9 +6,7 @@ import { ParseErrorSkipping, ParseErrorWantingMore } from "./grammar.mts";
 /*
 eslint-disable
   @typescript-eslint/no-explicit-any,
-  @typescript-eslint/no-unsafe-assignment,
-  @typescript-eslint/no-unsafe-argument,
-  @typescript-eslint/no-unsafe-return
+  @typescript-eslint/no-unsafe-argument
 */
 
 const path = "test";
@@ -16,7 +14,8 @@ let contents = "";
 let actual: any;
 
 console.log("Case: readResumably with full input available");
-contents = "[[1 [2 3] [] ] 4]";
+contents = "[[1, [2, 3], [] ], 4]";
+//contents = "[[1 [2 3] [] ] 4]";
 actual = readResumably({ path, contents });
 const expectedWithPosition = {
   location: { column: 1, file: 'test', line: 1 },
@@ -29,26 +28,26 @@ const expectedWithPosition = {
           value: 1
         },
         {
-          location: { column: 5, file: 'test', line: 1 },
+          location: { column: 6, file: 'test', line: 1 },
           value: [
             {
-              location: { column: 6, file: 'test', line: 1 },
+              location: { column: 7, file: 'test', line: 1 },
               value: 2
             },
             {
-              location: { column: 8, file: 'test', line: 1 },
+              location: { column: 10, file: 'test', line: 1 },
               value: 3
             },
           ],
         },
         {
-          location: { column: 11, file: 'test', line: 1 },
+          location: { column: 14, file: 'test', line: 1 },
           value: [],
         },
       ],
     },
     {
-      location: { column: 16, file: 'test', line: 1 },
+      location: { column: 20, file: 'test', line: 1 },
       value: 4,
     },
   ],
@@ -59,7 +58,7 @@ assert.deepStrictEqual(
 );
 
 console.log("Case: toJsValue");
-const expected = [[1, [2, 3], [], ], 4];
+const expected = [[1, [2, 3], [] ], 4];
 assert.deepStrictEqual(
   toJsValue(expectedWithPosition),
   expected,
@@ -191,5 +190,19 @@ for (
     );
   }
 }
+
+console.log("Case: readResumably when the input doesn't contain a comma between two numbers in an array");
+actual = readResumably({ path, contents: "[1 2]" });
+assert.ok(actual instanceof ParseErrorSkipping, `${JSON.stringify(actual)} is not ParseErrorSkipping`);
+assert.deepStrictEqual(
+  actual.message,
+  `Expected comma, but got number: "2", at line 1, column 4`,
+);
+actual = readResumably({ path, contents: "[1, 2[]]" });
+assert.ok(actual instanceof ParseErrorSkipping, `${JSON.stringify(actual)} is not ParseErrorSkipping`);
+assert.deepStrictEqual(
+  actual.message,
+  `Expected comma, but got open bracket: "[", at line 1, column 6`,
+);
 
 console.log("OK");

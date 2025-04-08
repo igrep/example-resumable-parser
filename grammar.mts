@@ -1,10 +1,11 @@
 import {
-    eof,
-    isEof,
+  eof,
+  isEof,
   type Eof,
   type MatchedToken,
   type SpaceSkippingScanner,
   type TokenAndRE,
+  type TokenKind,
 } from "./scanner.mts";
 import type {
   LocatedArray,
@@ -18,7 +19,7 @@ export const tokens: TokenAndRE[] = [
   { token: "close bracket", regexp: /\]/y },
   { token: "number", regexp: /\d+/y },
   { token: "comma", regexp: /,/y },
-  { token: "UNKNOWN", regexp: /[^\[\]\d,]+/y },
+  { token: "UNKNOWN", regexp: /[^\[\]\d,\s]+/y },
 ];
 
 export type ParseError<R> =
@@ -67,19 +68,19 @@ export function resultP<R>(
   s: SpaceSkippingScanner,
   k: (r: Result | ParseError<Result>) => R | ParseError<R>,
 ): R | ParseError<R> {
-  const token = s.peek();
-  if (isEof(token)) {
-    return new ParseErrorWantingMore("form", token, function resultPEof(more) {
-      s.feed(more);
-      s.next(); // go to next token
-      return resultP(s, k);
-    });
+  const token = handleEof(
+    s,
+    "form",
+    () => resultP(s, k),
+  )
+  if (token instanceof ParseErrorWantingMore) {
+    return token;
   }
 
-  const {line, column, file} = token;
+  const { line, column, file } = token;
   switch (token.tokenKind) {
     case "open bracket":
-      return arrayP(s, {line, column, file}, k);
+      return arrayP(s, { line, column, file }, k);
     case "number":
       s.next(); // Drop the peeked token
       return numberP(token, k);
@@ -100,9 +101,9 @@ function numberP<R>(
   token: MatchedToken,
   k: (r: LocatedNumber) => R | ParseError<R>
 ): R | ParseError<R> {
-  const {line, column, file} = token;
-  const {matched} = token;
-  return k({location: {line, column, file}, value: parseInt(matched[0])});
+  const { line, column, file } = token;
+  const { matched } = token;
+  return k({ location: { line, column, file }, value: parseInt(matched[0]) });
 }
 
 function arrayP<R>(
@@ -115,17 +116,17 @@ function arrayP<R>(
   s.next(); // drop open paren
   const results: Result[] = [];
   return (function arrayPLoop(): R | ParseError<R> {
-    const next = s.peek();
-    if (isEof(next)) {
-      return new ParseErrorWantingMore(
-        `form or ${close}`,
-        next,
-        (more) => {
-          s.feed(more);
-          s.next(); // go to next token
-          return arrayPLoop();
-        }
-      );
+    const next = handleEof(
+      s,
+      "form, comma, or close bracket",
+      arrayPLoop,
+    )
+    if (next instanceof ParseErrorWantingMore) {
+      return next;
+    }
+    if (next.tokenKind === close) {
+      s.next(); // drop close paren
+      return k({location, value: results});
     }
     if (next.tokenKind === "UNKNOWN") {
       return new ParseErrorSkipping(
@@ -137,12 +138,6 @@ function arrayP<R>(
         },
       );
     }
-    if (next.tokenKind === close) {
-      s.next(); // drop close paren
-      return k({location, value: results});
-    }
-
-    // TODO: Parse comma
 
     return resultP(s, function arrayPNext(r): R | ParseError<R> {
       if (r instanceof ParseErrorWantingMore) {
@@ -163,8 +158,51 @@ function arrayP<R>(
           () => arrayPLoop(),
         );
       }
-      results.push(r);
-      return arrayPLoop();
+      return (function comma(): R | ParseError<R> {
+        const next = handleEof(
+          s,
+          "close bracket, or comma",
+          comma,
+        );
+        if (next instanceof ParseErrorWantingMore) {
+          return next;
+        }
+
+        s.next(); // drop comma or close paren
+        if (next.tokenKind === close) {
+          results.push(r);
+          return k({ location, value: results });
+        }
+        if (next.tokenKind !== 'comma') {
+          return new ParseErrorSkipping(
+            "comma",
+            next,
+            () => comma(),
+          );
+        }
+        results.push(r);
+        return arrayPLoop();
+      })();
     });
   })();
+}
+
+export function handleEof<R>(
+  s: SpaceSkippingScanner,
+  expected: TokenKind,
+  resume: () => R | ParseError<R>,
+): ParseErrorWantingMore<R> | MatchedToken {
+  const next = s.peek();
+  if (isEof(next)) {
+    return new ParseErrorWantingMore(
+      expected,
+      next,
+      (more) => {
+        s.feed(more);
+        s.next(); // go to next token
+        return resume();
+      }
+    );
+  }
+  return next;
 }
