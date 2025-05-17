@@ -133,7 +133,7 @@ function arrayP<R>(
         "form",
         next,
         () => {
-          s.next(); // drop close paren
+          s.next(); // drop unknown token
           return arrayPLoop();
         },
       );
@@ -187,7 +187,7 @@ function arrayP<R>(
   })();
 }
 
-export function handleEof<R>(
+function handleEof<R>(
   s: SpaceSkippingScanner,
   expected: TokenKind,
   resume: () => R | ParseError<R>,
