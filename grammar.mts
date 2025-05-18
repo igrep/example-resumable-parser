@@ -64,6 +64,10 @@ export class ParseErrorSkipping<R> extends ParseErrorBase {
   }
 }
 
+export function isParseError<R>(r: unknown): r is ParseError<R> {
+  return r instanceof ParseErrorBase;
+}
+
 export function resultP<R>(
   s: SpaceSkippingScanner,
   k: (r: Result | ParseError<Result>) => R | ParseError<R>,
@@ -140,23 +144,8 @@ function arrayP<R>(
     }
 
     return resultP(s, function arrayPNext(r): R | ParseError<R> {
-      if (r instanceof ParseErrorWantingMore) {
-        return new ParseErrorWantingMore(
-          "form",
-          eof(r.location),
-          (more) => {
-            s.feed(more);
-            s.next(); // go to next token
-            return arrayPLoop();
-          },
-        );
-      }
-      if (r instanceof ParseErrorSkipping) {
-        return new ParseErrorSkipping(
-          "form",
-          next,
-          () => arrayPLoop(),
-        );
+      if (isParseError<unknown>(r)) {
+        return k(r as ParseError<LocatedArray>);
       }
       return (function comma(): R | ParseError<R> {
         const next = handleEof(
